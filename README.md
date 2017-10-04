@@ -24,7 +24,7 @@ To import the data file into Elasticsearch (use the appropriate binary for your 
 -dest http://localhost:9200 -dest-index mynewindex -dest-type mynewtype
 ```
 
-In this example, `dest-index` and `dest-type` are optional; if they are left out, the same index name and type will be used as was in the original data. If the source filename specified ends in `.gz`, the file will be guzipped first.
+In this example, `dest-index` and `dest-type` are optional; if they are left out, the same index name and type will be used as was in the original data. If the source filename specified ends in `.gz`, the file will be gunzipped first.
 
 
 # TODO
