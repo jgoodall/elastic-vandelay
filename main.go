@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"flag"
@@ -184,22 +185,35 @@ func readDataFromElastic(ctx context.Context, g *errgroup.Group, client *elastic
 func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, hits chan interface{}) error {
 	var in *os.File
 	var err error
+	var gzw *gzip.Reader
 	var r *bufio.Reader
+
+	doGzip := strings.HasSuffix(filePath, ".gz")
+
 	if filePath != "" {
 		in, err = os.Open(filePath)
 		if err != nil {
 			return fmt.Errorf("unable to create destination file %s: %s", filePath, err.Error())
 		}
+		if doGzip {
+			gzw, err = gzip.NewReader(in)
+			if err != nil {
+				return err
+			}
+			r = bufio.NewReader(gzw)
+		} else {
+			r = bufio.NewReader(in)
+		}
 	} else {
-		in = os.Stdin
+		r = bufio.NewReader(os.Stdin)
 	}
 
 	g.Go(func() error {
-		r = bufio.NewReader(in)
 		var line []byte
 		for {
 			line, err = r.ReadBytes('\n')
 			if err == io.EOF {
+				gzw.Close()
 				in.Close()
 				close(hits)
 				return nil
@@ -258,6 +272,7 @@ func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.
 func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, bar *pb.ProgressBar, hits chan interface{}) error {
 	var out *os.File
 	var err error
+	var gzw *gzip.Writer
 	var w *bufio.Writer
 	if filePath != "" {
 		out, err = os.Create(filePath)
@@ -268,14 +283,17 @@ func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, ba
 		out = os.Stdout
 	}
 
-	g.Go(func() error {
-		w = bufio.NewWriter(out)
-		for h := range hits {
-			hit := h.(elastic.SearchHit)
-			// line := fmt.Sprintf(`{"_index": "%s", "_type": "%s", "_id": "%s", "_source": "%s"}`, hit.Index, hit.Type, hit.Id, string(*hit.Source))
-			// w.WriteString(line + "\n")
+	doGzip := strings.HasSuffix(filePath, ".gz")
 
-			b, err := json.Marshal(hit)
+	g.Go(func() error {
+		if doGzip {
+			gzw = gzip.NewWriter(out)
+			w = bufio.NewWriter(gzw)
+		} else {
+			w = bufio.NewWriter(out)
+		}
+		for h := range hits {
+			b, err := json.Marshal(h.(elastic.SearchHit))
 			if err != nil {
 				logger.Printf("error marshaling json: %s", err)
 			}
@@ -293,6 +311,9 @@ func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, ba
 			}
 		}
 		w.Flush()
+		if doGzip {
+			gzw.Close()
+		}
 		out.Close()
 		return nil
 	})
