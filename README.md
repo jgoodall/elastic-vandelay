@@ -8,7 +8,7 @@ To export data from Elasticsearch to a file (use the appropriate binary for your
 ```
 ./bin/elastic-vandelay_darwin_amd64 \
 -source http://localhost:9200 -source-index myindex \
--source-type mytype -source-time-field stime \
+-source-type mytype -source-time-field timestamp \
 -source-time-start "2017.01.01 07:30:00" -source-time-end "2017.01.01 17:30:00" \
 -dest ~/Desktop/myindex.json
 ```
