@@ -22,6 +22,14 @@ const (
 	size = 10000
 )
 
+type tt int8
+
+const (
+	esToFile tt = iota
+	esToEs
+	fileToEs
+)
+
 var (
 	logger       *log.Logger
 	bar          *pb.ProgressBar
@@ -34,6 +42,7 @@ var (
 	dst          string
 	dstIndex     string
 	dstType      string
+	transType    tt
 )
 
 func init() {
@@ -62,12 +71,27 @@ func main() {
 
 	g, ctx := errgroup.WithContext(context.Background())
 
-	if strings.HasPrefix(src, "http") {
-		// Source is elasticsearch url (assume output is file).
-		if srcIndex == "" {
-			logger.Fatal("please specify an index")
-		}
+	// Type: Transfer - es -> es, Dump - es -> file, or Load - file -> es
+	if strings.HasPrefix(src, "http") && strings.HasPrefix(dst, "http") {
+		transType = esToEs
+	} else if strings.HasPrefix(src, "http") {
+		transType = esToFile
+	} else if strings.HasPrefix(dst, "http") {
+		transType = fileToEs
+	}
 
+	// Check that required parameters are set.
+	if transType == esToEs || transType == esToFile {
+		if srcIndex == "" {
+			logger.Fatal("please specify a source index")
+		}
+	} else {
+		if dst == "" {
+			logger.Fatal("please specify an elastic destination url")
+		}
+	}
+
+	if transType == esToEs || transType == esToFile {
 		client, total, err := setupElasticSource(src, srcIndex, srcType)
 		if err != nil {
 			logger.Fatal(err)
@@ -76,16 +100,16 @@ func main() {
 
 		readDataFromElastic(ctx, g, client, hits)
 
-		err = writeDataToFile(ctx, g, dst, bar, hits)
-		if err != nil {
-			logger.Fatal(err)
+		// Write output to file or elastic.
+		if transType == esToFile {
+			err = writeDataToFile(ctx, g, dst, bar, hits)
+			if err != nil {
+				logger.Fatal(err)
+			}
+		} else {
+			// TODO: write output to Elasticsearch
 		}
-
 	} else {
-		// Source is a file (assume output is elasticsearch).
-		if dst == "" {
-			logger.Fatal("please specify an elastic destination url")
-		}
 		// Elasticsearch client.
 		client, err := elastic.NewClient(elastic.SetURL(dst))
 		if err != nil {
