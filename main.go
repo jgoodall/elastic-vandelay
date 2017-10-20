@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tidwall/gjson"
 
@@ -94,6 +95,9 @@ func main() {
 		}
 	}
 
+	startTime := time.Now()
+
+	// Do the export, copy, or import.
 	if transType == esToEs || transType == esToFile {
 		client, total, err := setupElasticSource(src, srcIndex, srcType)
 		if err != nil {
@@ -168,6 +172,8 @@ func main() {
 
 	// Done.
 	bar.Finish()
+
+	logger.Printf("completed in %s\n", time.Now().Sub(startTime).String())
 
 }
 
