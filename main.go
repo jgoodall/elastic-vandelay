@@ -8,9 +8,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/tidwall/gjson"
 
 	"golang.org/x/sync/errgroup"
 
@@ -53,7 +56,7 @@ func init() {
 	flag.StringVar(&srcTimeStart, "source-time-start", "", "start time of the time field (format: YYYY.MM.DD HH:MM:SS)")
 	flag.StringVar(&srcTimeEnd, "source-time-end", "", "end time of the time field (format: YYYY.MM.DD HH:MM:SS)")
 	flag.StringVar(&dst, "dest", "", "destination, which can be an elasticsearch URL or a file path (optional, defaults to stdout if not specified)")
-	flag.StringVar(&dstIndex, "dest-index", "", "destination index name, applicable if dest is url (optional, defaults to the index originally dumped from)")
+	flag.StringVar(&dstIndex, "dest-index", "", "destination index name, applicable if dest is url")
 	flag.StringVar(&dstType, "dest-type", "", "destination type of documents, applicable if dest is url (optional, defaults to the type originally dumped from)")
 
 }
@@ -66,7 +69,7 @@ func main() {
 	// Parse command line flags.
 	flag.Parse()
 
-	// Channel to pass results to.
+	// Channel to pass data results to.
 	hits := make(chan interface{})
 
 	g, ctx := errgroup.WithContext(context.Background())
@@ -100,27 +103,51 @@ func main() {
 
 		readDataFromElastic(ctx, g, client, hits)
 
+		mappings, err := readMappingsFromElastic(client, srcIndex)
+		if err != nil {
+			logger.Fatal(err)
+		}
+
 		// Write output to file or elastic.
 		if transType == esToFile {
+			err = writeMappingsToFile(dst, mappings)
+			if err != nil {
+				logger.Fatal(err)
+			}
+
 			err = writeDataToFile(ctx, g, dst, bar, hits)
 			if err != nil {
 				logger.Fatal(err)
 			}
 		} else {
-			// TODO: write output to Elasticsearch
+			// TODO: write output to Elasticsearch.
+			logger.Fatalln("it is not currently possible to pull data from elasticsearch and push directly into a new elasticsearch index; see https://github.com/jgoodall/elastic-vandelay/issues/1")
 		}
 	} else {
-		// Elasticsearch client.
+		if dstIndex == "" {
+			logger.Fatalln("please provide a destination index name to load data into")
+		}
+
 		client, err := elastic.NewClient(elastic.SetURL(dst))
 		if err != nil {
 			logger.Fatalf("error creating elastic client to url %s: %s", dst, err.Error())
 		}
 
+		// TODO: currently the wrong line count if input file is gzipped.
 		total, err := lineCount(src)
 		if err != nil {
 			logger.Fatal(err)
 		}
 		bar = pb.New64(total).SetWriter(os.Stderr).Start()
+
+		mappings, err := readMappingsFromFile(src)
+		if err != nil {
+			logger.Fatal(err)
+		}
+		err = writeMappingsAsStringToElastic(client, dstIndex, string(mappings))
+		if err != nil {
+			logger.Fatal(err)
+		}
 
 		err = readDataFromFile(ctx, g, src, hits)
 		if err != nil {
@@ -174,6 +201,8 @@ func setupElasticSource(url, index, typ string) (*elastic.Client, int64, error) 
 	return client, total, nil
 }
 
+// readDataFromElastic reads data from elasticsearch and sends each result
+// to the channel.
 func readDataFromElastic(ctx context.Context, g *errgroup.Group, client *elastic.Client, hits chan interface{}) {
 	g.Go(func() error {
 		defer close(hits)
@@ -206,6 +235,8 @@ func readDataFromElastic(ctx context.Context, g *errgroup.Group, client *elastic
 	})
 }
 
+// readDataFromFile reads data from a file and sends each line to the
+// channel.
 func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, hits chan interface{}) error {
 	var in *os.File
 	var err error
@@ -237,7 +268,9 @@ func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, h
 		for {
 			line, err = r.ReadBytes('\n')
 			if err == io.EOF {
-				gzw.Close()
+				if doGzip {
+					gzw.Close()
+				}
 				in.Close()
 				close(hits)
 				return nil
@@ -251,6 +284,8 @@ func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, h
 	return nil
 }
 
+// writeDataToElastic uses the bulk processor to send bulk requests to
+// Elasticsearch for each document sent on channel.
 func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.Client, dstIndex, dstType string, bar *pb.ProgressBar, hits chan interface{}) error {
 	bulk, err := client.BulkProcessor().Name("bulker").Workers(2).Do(context.Background())
 	if err != nil {
@@ -293,6 +328,7 @@ func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.
 	return nil
 }
 
+// writeDataToFile writes each document sent on channel to a file.
 func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, bar *pb.ProgressBar, hits chan interface{}) error {
 	var out *os.File
 	var err error
@@ -357,4 +393,86 @@ func lineCount(filename string) (int64, error) {
 		lc++
 	}
 	return lc, s.Err()
+}
+
+// readMappingsFromElastic gets the mappings for a given index.
+func readMappingsFromElastic(client *elastic.Client, index string) (m map[string]interface{}, err error) {
+	m, err = client.GetMapping().Index(index).Do(context.Background())
+	return
+}
+
+// readMappingsFromFile gets the mappings from a json file.
+func readMappingsFromFile(file string) (m []byte, err error) {
+	baseFileName := strings.Replace(strings.Replace(file, ".gz", "", 1), ".json", "", 1)
+	f := baseFileName + "-mapping.json"
+	if _, e := os.Stat(f); os.IsNotExist(e) {
+		return nil, fmt.Errorf("mappings file does not exist: %s", f)
+	}
+	r, err := os.Open(f)
+	if err == nil {
+		m, err = ioutil.ReadAll(r)
+	}
+	defer r.Close()
+	return
+}
+
+// writeMappingsAsMapToElastic sends mappings to elasticsearch.
+func writeMappingsAsMapToElastic(client *elastic.Client, index string, m map[string]interface{}) (err error) {
+	_, err = client.PutMapping().BodyJson(m).Index(index).Do(context.Background())
+	return
+}
+
+// writeMappingsAsStringToElastic sends mappings to elasticsearch.
+func writeMappingsAsStringToElastic(client *elastic.Client, index, m string) (err error) {
+	// Fail if the index already exists.
+	exists, _ := client.IndexExists(index).Do(context.Background())
+	if exists {
+		err = fmt.Errorf("index %s already exists, if you want to replace it delete it first - 'curl -XDELETE %s/%s'", index, dst, index)
+		return err
+	}
+
+	// Parse string into map. Top level of map is old index name.
+	mappings, ok := gjson.Parse(m).Value().(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unable to parse json mappings")
+	}
+
+	// There should only be one top level object - the old index name - so
+	// we are just getting the value of that key.
+	var tm map[string]interface{}
+	for _, v := range mappings {
+		tm = v.(map[string]interface{})
+		break
+	}
+	typeMappings := tm["mappings"]
+
+	// The new map.
+	newMap := map[string]interface{}{
+		"mappings": map[string]interface{}{},
+	}
+
+	// Loop through each type and add it to the mapping.
+	for key, val := range typeMappings.(map[string]interface{}) {
+		newMap["mappings"].(map[string]interface{})[key] = val
+	}
+
+	// Create the new index with the mappings.
+	_, err = client.CreateIndex(index).BodyJson(newMap).Do(context.Background())
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+// writeMappingsToFile writes JSON of mappings to a file.
+func writeMappingsToFile(file string, m map[string]interface{}) (err error) {
+	// Strip extension, output.json becomes output-mapping.json
+	f := strings.SplitN(file, ".", 2)[0] + "-mapping.json"
+	var mapJSON []byte
+	mapJSON, err = json.Marshal(m)
+	if err == nil {
+		err = ioutil.WriteFile(f, mapJSON, 0644)
+	}
+	return
 }
