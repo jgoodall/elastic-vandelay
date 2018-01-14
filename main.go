@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -388,17 +389,25 @@ func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, ba
 
 // lineCount will return the number of lines in a given file.
 func lineCount(filename string) (int64, error) {
-	lc := int64(0)
-	f, err := os.Open(filename)
+	buf := make([]byte, 32*1024)
+	count := int64(0)
+	lineSep := []byte{'\n'}
+	r, err := os.Open(filename)
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		lc++
+	for {
+		c, err := r.Read(buf)
+		count += int64(bytes.Count(buf[:c], lineSep))
+
+		switch {
+		case err == io.EOF:
+			return count, nil
+
+		case err != nil:
+			return count, err
+		}
 	}
-	return lc, s.Err()
 }
 
 // readMappingsFromElastic gets the mappings for a given index.
