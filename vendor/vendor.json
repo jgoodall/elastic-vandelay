@@ -3,6 +3,30 @@
 	"ignore": "test",
 	"package": [
 		{
+			"checksumSHA1": "HIF2ZYMMr2kzt5oE7SRjKefOIOc=",
+			"path": "github.com/mailru/easyjson",
+			"revision": "32fa128f234d041f196a9f3e0fea5ac9772c08e1",
+			"revisionTime": "2017-11-20T08:03:33Z"
+		},
+		{
+			"checksumSHA1": "T8soMJArSZrYnhmdpAnq1bVxQ6Q=",
+			"path": "github.com/mailru/easyjson/buffer",
+			"revision": "32fa128f234d041f196a9f3e0fea5ac9772c08e1",
+			"revisionTime": "2017-11-20T08:03:33Z"
+		},
+		{
+			"checksumSHA1": "QA+9yav6Xzq7LmuZUREeOX1hfjk=",
+			"path": "github.com/mailru/easyjson/jlexer",
+			"revision": "32fa128f234d041f196a9f3e0fea5ac9772c08e1",
+			"revisionTime": "2017-11-20T08:03:33Z"
+		},
+		{
+			"checksumSHA1": "svJ32su8itWtutcMkP+RzoMsIfw=",
+			"path": "github.com/mailru/easyjson/jwriter",
+			"revision": "32fa128f234d041f196a9f3e0fea5ac9772c08e1",
+			"revisionTime": "2017-11-20T08:03:33Z"
+		},
+		{
 			"checksumSHA1": "cTDA66oZUy18cIzJsU1diKq+9CE=",
 			"path": "github.com/mattn/go-colorable",
 			"revision": "ad5389df28cdac544c99bd7b9161a0b5b6ca9d1b",
@@ -99,23 +123,23 @@
 			"revisionTime": "2017-02-01T02:26:20Z"
 		},
 		{
-			"checksumSHA1": "Uv6a/M9wO8QyNfKOHuQIg1X03Fg=",
+			"checksumSHA1": "Gn139PPcq5AfMoESnjIWSIDcXcw=",
 			"path": "gopkg.in/olivere/elastic.v5",
-			"revision": "2a08d39723b7f4df92b96e2dff891a60952714d6",
-			"revisionTime": "2017-09-26T20:05:24Z"
+			"revision": "0eca603795dd69d8270bba3383358c074044d8fc",
+			"revisionTime": "2018-01-12T09:51:36Z"
 		},
 		{
 			"checksumSHA1": "Z/5tTcmNfSOHMkcLDkxN93PQ410=",
 			"path": "gopkg.in/olivere/elastic.v5/config",
-			"revision": "2a08d39723b7f4df92b96e2dff891a60952714d6",
-			"revisionTime": "2017-09-26T20:05:24Z"
+			"revision": "0eca603795dd69d8270bba3383358c074044d8fc",
+			"revisionTime": "2018-01-12T09:51:36Z"
 		},
 		{
 			"checksumSHA1": "pCApZfp2CeDnWbNVsyzNO62ZUXA=",
 			"path": "gopkg.in/olivere/elastic.v5/uritemplates",
-			"revision": "2a08d39723b7f4df92b96e2dff891a60952714d6",
-			"revisionTime": "2017-09-26T20:05:24Z"
+			"revision": "0eca603795dd69d8270bba3383358c074044d8fc",
+			"revisionTime": "2018-01-12T09:51:36Z"
 		}
 	],
-	"rootPath": "github.com/jgoodall/elastic-export"
+	"rootPath": "github.com/jgoodall/elastic-vandelay"
 }
