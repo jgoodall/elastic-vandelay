@@ -133,7 +133,10 @@ func main() {
 			logger.Fatalln("please provide a destination index name to load data into")
 		}
 
-		client, err := elastic.NewClient(elastic.SetURL(dst))
+		client, err := elastic.NewClient(
+			elastic.SetURL(dst),
+			elastic.SetSniff(false),
+		)
 		if err != nil {
 			logger.Fatalf("error creating elastic client to url %s: %s", dst, err.Error())
 		}
