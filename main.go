@@ -486,7 +486,9 @@ func writeMappingsAsStringToElastic(client *elastic.Client, index, m string) (er
 // writeMappingsToFile writes JSON of mappings to a file.
 func writeMappingsToFile(file string, m map[string]interface{}) (err error) {
 	// Strip extension, output.json becomes output-mapping.json
-	f := strings.SplitN(file, ".", 2)[0] + "-mapping.json"
+	f := strings.TrimSuffix(file, ".gz")
+	f = strings.TrimSuffix(f, ".json")
+	f = f + "-mapping.json"
 	var mapJSON []byte
 	mapJSON, err = json.Marshal(m)
 	if err == nil {
