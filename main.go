@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	pb "gopkg.in/cheggaaa/pb.v2"
-	elastic "gopkg.in/olivere/elastic.v5"
+	elastic "gopkg.in/olivere/elastic.v6"
 )
 
 const (

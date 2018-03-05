@@ -18,6 +18,7 @@ To export data from Elasticsearch to a file (use the appropriate binary for your
 
 `source-type` is optional, defaulting to all types. The `source-time-*` fields are optional, they can be specified to limit the data exported based on a time field in the data; the format for the times must be `YYYY.MM.DD HH:MM:SS`. If the destination filename specified ends in `.gz`, the file will be gzipped.
 
+
 ## Import
 
 To import the data file into Elasticsearch (use the appropriate binary for your platform):
@@ -30,6 +31,11 @@ To import the data file into Elasticsearch (use the appropriate binary for your 
 ```
 
 `dest-type` is optional; if left out, the same type will be used as was in the original data. If the source filename specified ends in `.gz`, the file will be gunzipped first.
+
+
+## Development
+
+Use [`dep`](https://golang.github.io/dep/) for dependency management.
 
 
 ## TODO
