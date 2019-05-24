@@ -258,9 +258,9 @@ func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, h
 			if err != nil {
 				return err
 			}
-			r = bufio.NewReaderSize(gzw, 8192)
+			r = bufio.NewReaderSize(gzw, 16384)
 		} else {
-			r = bufio.NewReaderSize(in, 8192)
+			r = bufio.NewReaderSize(in, 16384)
 		}
 	} else {
 		r = bufio.NewReader(os.Stdin)
