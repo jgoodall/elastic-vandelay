@@ -14,7 +14,7 @@ To export data from Elasticsearch to a file (use the appropriate binary for your
 
 The export will result in two files: `dest-file` will be the exported data and `dest-file-mapping.json` will be the mappings.
 
-The `source-time-*` fields are optional, they can be specified to limit the data exported based on a time field in the data; the format for the times must be `YYYY.MM.DD HH:MM:SS`. 
+The `time-*` fields are optional, they can be specified to limit the data exported based on a time field in the data; the format for the times must be `YYYY.MM.DD HH:MM:SS`. 
 
 If the `dest-file` name specified ends in `.gz`, the data file will be gzipped.
 
