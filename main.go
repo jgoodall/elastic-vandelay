@@ -6,21 +6,20 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/olivere/elastic/v7"
+	"github.com/schollz/progressbar/v2"
 	"github.com/tidwall/gjson"
-
 	"golang.org/x/sync/errgroup"
-
-	pb "gopkg.in/cheggaaa/pb.v2"
-	elastic "gopkg.in/olivere/elastic.v6"
+	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const (
@@ -36,155 +35,127 @@ const (
 )
 
 var (
-	logger       *log.Logger
-	bar          *pb.ProgressBar
-	src          string
-	srcIndex     string
-	srcType      string
-	srcTimeField string
-	srcTimeStart string
-	srcTimeEnd   string
-	dst          string
-	dstIndex     string
-	dstType      string
-	transType    tt
+	app   = kingpin.New("elastic-vandelay", "A tool to import and export an elasticsearch index")
+	debug = app.Flag("debug", "Enable debug mode").Bool()
+
+	// Export from es to a file
+	exportCmd       = app.Command("export", "Export an index to a file")
+	exportSrcURL    = exportCmd.Flag("source-url", "Elasticsearch host to export (http://host:port/)").Required().URL()
+	exportSrcIndex  = exportCmd.Flag("source-index", "Elasticsearch index to export (http://host:port/)").Required().String()
+	exportDstFile   = exportCmd.Flag("dest-file", "File path to save the export to (use '.gz' suffix to gzip the data)").Required().OpenFile(os.O_CREATE|os.O_EXCL, 0644)
+	exportTimeField = exportCmd.Flag("time-field", "Elasticsearch time field to filter data on").String()
+	exportTimeStart = exportCmd.Flag("time-start", "The start time value to use to filter the data to export (format: YYYY.MM.DD HH:MM:SS)").String()
+	exportTimeEnd   = exportCmd.Flag("time-end", "The end time value to use to filter the data to export (format: YYYY.MM.DD HH:MM:SS)").String()
+
+	// Import from file to es
+	importCmd      = app.Command("import", "Import an index")
+	importSrcFile  = importCmd.Flag("source-file", "File path of the exported index to import (a file with '.gz' suffix will be gunzipped first)").Required().File()
+	importDstURL   = importCmd.Flag("dest-url", "Elasticsearch host to import the index to (http://host:port/)").Required().URL()
+	importDstIndex = importCmd.Flag("dest-index", "Elasticsearch index to import").Required().String()
 )
 
-func init() {
-	flag.StringVar(&src, "source", "http://localhost:9200", "source, which can be an elasticsearch URL or a file path")
-	flag.StringVar(&srcIndex, "source-index", "", "index to dump, applicable if source is url")
-	flag.StringVar(&srcType, "source-type", "", "type of documents to dump, applicable if source is url (optional, defaults to all)")
-	flag.StringVar(&srcTimeField, "source-time-field", "", "time field to query to limit the source documents to get")
-	flag.StringVar(&srcTimeStart, "source-time-start", "", "start time of the time field (format: YYYY.MM.DD HH:MM:SS)")
-	flag.StringVar(&srcTimeEnd, "source-time-end", "", "end time of the time field (format: YYYY.MM.DD HH:MM:SS)")
-	flag.StringVar(&dst, "dest", "", "destination, which can be an elasticsearch URL or a file path (optional, defaults to stdout if not specified)")
-	flag.StringVar(&dstIndex, "dest-index", "", "destination index name, applicable if dest is url")
-	flag.StringVar(&dstType, "dest-type", "", "destination type of documents, applicable if dest is url (optional, defaults to the type originally dumped from)")
-
-}
+var (
+	logger *log.Logger
+	bar    *progressbar.ProgressBar
+)
 
 func main() {
-
-	// Log to stderr since stdout may be used for outputting data.
 	logger = log.New(os.Stderr, "", 0)
+	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
+	case exportCmd.FullCommand():
+		kingpin.FatalIfError(doExport(), "Export failed")
+	case importCmd.FullCommand():
+		kingpin.FatalIfError(doImport(), "Import failed")
+	}
+}
 
-	// Parse command line flags.
-	flag.Parse()
-
+func doExport() error {
+	logger.Printf("exporting from index %s to file %s\n", *exportSrcURL, (*exportDstFile).Name())
+	client, total, err := connectElasticSource((*exportSrcURL).String(), *exportSrcIndex)
+	if err != nil {
+		return err
+	}
 	// Channel to pass data results to.
 	hits := make(chan interface{})
-
 	g, ctx := errgroup.WithContext(context.Background())
-
-	// Type: Transfer - es -> es, Dump - es -> file, or Load - file -> es
-	if strings.HasPrefix(src, "http") && strings.HasPrefix(dst, "http") {
-		transType = esToEs
-	} else if strings.HasPrefix(src, "http") {
-		transType = esToFile
-	} else if strings.HasPrefix(dst, "http") {
-		transType = fileToEs
-	}
-
-	// Check that required parameters are set.
-	if transType == esToEs || transType == esToFile {
-		if srcIndex == "" {
-			logger.Fatal("please specify a source index")
-		}
-	} else {
-		if dst == "" {
-			logger.Fatal("please specify an elastic destination url")
-		}
-	}
-
 	startTime := time.Now()
+	bar = progressbar.NewOptions64(total, progressbar.OptionSetRenderBlankState(true), progressbar.OptionSetWriter(os.Stderr))
 
-	// Do the export, copy, or import.
-	if transType == esToEs || transType == esToFile {
-		client, total, err := setupElasticSource(src, srcIndex, srcType)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		bar = pb.New64(total).SetWriter(os.Stderr).Start()
-
-		readDataFromElastic(ctx, g, client, hits)
-
-		mappings, err := readMappingsFromElastic(client, srcIndex)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		// Write output to file or elastic.
-		if transType == esToFile {
-			err = writeMappingsToFile(dst, mappings)
-			if err != nil {
-				logger.Fatal(err)
-			}
-
-			err = writeDataToFile(ctx, g, dst, bar, hits)
-			if err != nil {
-				logger.Fatal(err)
-			}
-		} else {
-			// TODO: write output to Elasticsearch.
-			logger.Fatalln("it is not currently possible to pull data from elasticsearch and push directly into a new elasticsearch index; see https://github.com/jgoodall/elastic-vandelay/issues/1")
-		}
-	} else {
-		if dstIndex == "" {
-			logger.Fatalln("please provide a destination index name to load data into")
-		}
-
-		client, err := elastic.NewClient(
-			elastic.SetURL(dst),
-			elastic.SetSniff(false),
-		)
-		if err != nil {
-			logger.Fatalf("error creating elastic client to url %s: %s", dst, err.Error())
-		}
-
-		// TODO: currently the wrong line count if input file is gzipped.
-		total, err := lineCount(src)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		bar = pb.New64(total).SetWriter(os.Stderr).Start()
-
-		mappings, err := readMappingsFromFile(src)
-		if err != nil {
-			logger.Fatal(err)
-		}
-		err = writeMappingsAsStringToElastic(client, dstIndex, string(mappings))
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		err = readDataFromFile(ctx, g, src, hits)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
-		err = writeDataToElastic(ctx, g, client, dstIndex, dstType, bar, hits)
-		if err != nil {
-			logger.Fatal(err)
-		}
-
+	readDataFromElastic(ctx, *exportSrcIndex, *exportTimeField, *exportTimeStart, *exportTimeEnd, g, client, hits)
+	mappings, err := readMappingsFromElastic(client, *exportSrcIndex)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = writeMappingsToFile((*exportDstFile).Name(), mappings)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = writeDataToFile(ctx, g, (*exportDstFile).Name(), hits)
+	if err != nil {
+		logger.Fatal(err)
 	}
 
 	// Check whether any goroutines failed.
 	if err := g.Wait(); err != nil {
 		logger.Fatal(err)
 	}
-
-	// Done.
 	bar.Finish()
+	logger.Printf("\nexport completed in %s\n", time.Now().Sub(startTime).String())
 
-	logger.Printf("completed in %s\n", time.Now().Sub(startTime).String())
-
+	return nil
 }
 
-// setupElasticSource configures the elastic client and returns the client
+func doImport() error {
+	logger.Printf("importing from file %s to index %s\n", (*importSrcFile).Name(), *importDstURL)
+	client, err := connectElasticDest((*importDstURL).String(), *importDstIndex)
+	if err != nil {
+		return err
+	}
+	// Channel to pass data results to.
+	hits := make(chan interface{})
+	g, ctx := errgroup.WithContext(context.Background())
+	startTime := time.Now()
+	fileStat, err := (*importSrcFile).Stat()
+	if err != nil {
+		return err
+	}
+	bar = progressbar.NewOptions64(fileStat.Size(), progressbar.OptionSetRenderBlankState(true), progressbar.OptionSetWriter(os.Stderr))
+
+	mappings, err := readMappingsFromFile((*importSrcFile).Name())
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = writeMappingsAsStringToElastic(client, (*importDstURL).String(), *importDstIndex, string(mappings))
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = readDataFromFile(ctx, g, (*importSrcFile).Name(), hits)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	err = writeDataToElastic(ctx, g, client, *importDstIndex, hits)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	// Check whether any goroutines failed.
+	if err := g.Wait(); err != nil {
+		logger.Fatal(err)
+	}
+	bar.Finish()
+	logger.Printf("\nimport completed in %s\n", time.Now().Sub(startTime).String())
+
+	return nil
+}
+
+// connectElasticSource configures the elastic client and returns the client
 // and the total number of documents in the index.
-func setupElasticSource(url, index, typ string) (*elastic.Client, int64, error) {
-	client, err := elastic.NewClient(elastic.SetURL(url))
+func connectElasticSource(url, index string) (*elastic.Client, int64, error) {
+	client, err := elastic.NewClient(
+		elastic.SetURL(url),
+		elastic.SetHealthcheck(false),
+		elastic.SetSniff(false),
+	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("error creating elastic client to url %s: %s", url, err.Error())
 	}
@@ -197,10 +168,10 @@ func setupElasticSource(url, index, typ string) (*elastic.Client, int64, error) 
 		return nil, 0, fmt.Errorf("index %s does not exist - you can only export an existing index", index)
 	}
 
-	counter := client.Count(index).Type(typ)
+	counter := client.Count(index)
 	var total int64
-	if srcTimeField != "" {
-		q := elastic.NewRangeQuery(srcTimeField).Format("yyyy.MM.dd HH:mm:ss").Gt(srcTimeStart).Lte(srcTimeEnd)
+	if *exportTimeField != "" {
+		q := elastic.NewRangeQuery(*exportTimeField).Format("yyyy.MM.dd HH:mm:ss").Gt(*exportTimeStart).Lte(*exportTimeEnd)
 		total, err = counter.Query(q).Do(context.Background())
 	} else {
 		total, err = counter.Do(context.Background())
@@ -211,9 +182,31 @@ func setupElasticSource(url, index, typ string) (*elastic.Client, int64, error) 
 	return client, total, nil
 }
 
+// connectElasticDest configures the elastic client and returns the client
+// and the total number of documents in the index.
+func connectElasticDest(url, index string) (*elastic.Client, error) {
+	client, err := elastic.NewClient(
+		elastic.SetURL(url),
+		elastic.SetHealthcheck(false),
+		elastic.SetSniff(false),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error creating elastic client to url %s: %s", url, err.Error())
+	}
+
+	exists, err := client.IndexExists(index).Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("error checking if index %s exists: %s", index, err.Error())
+	}
+	if exists {
+		return nil, fmt.Errorf("index exists - you can only import to a new index", index)
+	}
+	return client, nil
+}
+
 // readDataFromElastic reads data from elasticsearch and sends each result
 // to the channel.
-func readDataFromElastic(ctx context.Context, g *errgroup.Group, client *elastic.Client, hits chan interface{}) {
+func readDataFromElastic(ctx context.Context, srcIndex, srcTimeField, srcTimeStart, srcTimeEnd string, g *errgroup.Group, client *elastic.Client, hits chan interface{}) {
 	g.Go(func() error {
 		defer close(hits)
 
@@ -265,9 +258,9 @@ func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, h
 			if err != nil {
 				return err
 			}
-			r = bufio.NewReader(gzw)
+			r = bufio.NewReaderSize(gzw, 16384)
 		} else {
-			r = bufio.NewReader(in)
+			r = bufio.NewReaderSize(in, 16384)
 		}
 	} else {
 		r = bufio.NewReader(os.Stdin)
@@ -296,8 +289,9 @@ func readDataFromFile(ctx context.Context, g *errgroup.Group, filePath string, h
 
 // writeDataToElastic uses the bulk processor to send bulk requests to
 // Elasticsearch for each document sent on channel.
-func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.Client, dstIndex, dstType string, bar *pb.ProgressBar, hits chan interface{}) error {
-	bulk, err := client.BulkProcessor().Name("bulker").Workers(2).Do(context.Background())
+func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.Client, dstIndex string, hits chan interface{}) error {
+	w := runtime.NumCPU()
+	bulk, err := client.BulkProcessor().Name("bulker").Workers(w).Do(context.Background())
 	if err != nil {
 		return err
 	}
@@ -315,14 +309,10 @@ func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.
 			if dstIndex == "" {
 				i = res.Index
 			}
-			t := dstType
-			if dstType == "" {
-				t = res.Type
-			}
-			r := elastic.NewBulkIndexRequest().Index(i).Type(t).Id(res.Id).Doc(*res.Source)
+			r := elastic.NewBulkIndexRequest().Index(i).Id(res.Id).Doc(res.Source)
 			bulk.Add(r)
 
-			bar.Increment()
+			bar.Add64(int64(len(hit)))
 
 			// Terminate early?
 			select {
@@ -339,7 +329,7 @@ func writeDataToElastic(ctx context.Context, g *errgroup.Group, client *elastic.
 }
 
 // writeDataToFile writes each document sent on channel to a file.
-func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, bar *pb.ProgressBar, hits chan interface{}) error {
+func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, hits chan interface{}) error {
 	var out *os.File
 	var err error
 	var gzw *gzip.Writer
@@ -371,7 +361,7 @@ func writeDataToFile(ctx context.Context, g *errgroup.Group, filePath string, ba
 			w.Write(b)
 			w.Write([]byte("\n"))
 
-			bar.Increment()
+			bar.Add64(1)
 
 			// Terminate early?
 			select {
@@ -441,11 +431,11 @@ func writeMappingsAsMapToElastic(client *elastic.Client, index string, m map[str
 }
 
 // writeMappingsAsStringToElastic sends mappings to elasticsearch.
-func writeMappingsAsStringToElastic(client *elastic.Client, index, m string) (err error) {
+func writeMappingsAsStringToElastic(client *elastic.Client, dstURL, index, m string) (err error) {
 	// Fail if the index already exists.
 	exists, _ := client.IndexExists(index).Do(context.Background())
 	if exists {
-		err = fmt.Errorf("index %s already exists, if you want to replace it delete it first - 'curl -XDELETE %s/%s'", index, dst, index)
+		err = fmt.Errorf("index %s already exists, if you want to replace it delete it first - 'curl -XDELETE %s/%s'", index, dstURL, index)
 		return err
 	}
 
