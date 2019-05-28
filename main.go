@@ -199,7 +199,7 @@ func connectElasticDest(url, index string) (*elastic.Client, error) {
 		return nil, fmt.Errorf("error checking if index %s exists: %s", index, err.Error())
 	}
 	if exists {
-		return nil, fmt.Errorf("index exists - you can only import to a new index", index)
+		return nil, fmt.Errorf("index %s exists - you can only import to a new index", index)
 	}
 	return client, nil
 }
