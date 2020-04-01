@@ -1,20 +1,13 @@
 module github.com/jgoodall/elastic-vandelay
 
-go 1.12
+go 1.14
 
 require (
-	github.com/elastic/go-elasticsearch/v7 v7.1.1 // indirect
-	github.com/mailru/easyjson v0.0.0-20190403194419-1ea4449da983 // indirect
-	github.com/mattn/go-colorable v0.1.2 // indirect
-	github.com/olivere/elastic/v7 v7.0.1
-	github.com/schollz/progressbar/v2 v2.13.0
-	github.com/tidwall/gjson v1.2.1
-	github.com/tidwall/match v1.0.1 // indirect
-	github.com/tidwall/pretty v0.0.0-20190325153808-1166b9ac2b65 // indirect
-	golang.org/x/sync v0.0.0-20190227155943-e225da77a7e6
-	gopkg.in/VividCortex/ewma.v1 v1.1.1 // indirect
+	github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751 // indirect
+	github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d // indirect
+	github.com/olivere/elastic/v7 v7.0.13
+	github.com/schollz/progressbar/v3 v3.0.0
+	github.com/tidwall/gjson v1.6.0
+	golang.org/x/sync v0.0.0-20200317015054-43a5402ce75a
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
-	gopkg.in/cheggaaa/pb.v2 v2.0.6
-	gopkg.in/fatih/color.v1 v1.7.0 // indirect
-	gopkg.in/mattn/go-runewidth.v0 v0.0.4 // indirect
 )

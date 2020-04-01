@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/olivere/elastic/v7"
-	"github.com/schollz/progressbar/v2"
+	"github.com/schollz/progressbar/v3"
 	"github.com/tidwall/gjson"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/alecthomas/kingpin.v2"
